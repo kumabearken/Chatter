@@ -10,7 +10,7 @@
 
 #define IP_ADDRESS "192.168.1.68"
 #define DEFAULT_PORT "8000"
-#define DEFAULT_BUFLEN 512
+#define DEFAULT_BUFLEN 1024
 
 struct client_type
 {
@@ -35,8 +35,9 @@ long int cd(long int, long int);
 std::string encrypt(long int, long int, std::string);
 std::string decrypt(long int, long int, std::string);
 std::string getKeys();
-long int tt[100];
 //===========================================================================
+
+bool display = true;
 
 int process_client(client_type& new_client, std::vector<client_type>& client_array, std::thread& thread)
 {
@@ -52,12 +53,28 @@ int process_client(client_type& new_client, std::vector<client_type>& client_arr
 		{
 			int iResult = recv(new_client.socket, tempmsg, DEFAULT_BUFLEN, 0);
 			msg = "";
+			//parse the n and key
+			//std::cout << msg.c_str() << std::endl;
+			std::string s = new_client.serverPrivKey;
+			std::string delimiter = " ";
+			std::string privKey = s.substr(0, s.find(delimiter));
+			s.erase(0, s.find(delimiter) + delimiter.length());
+			std::string n = s;
+			s = "";
+			s = tempmsg;
+			if (display)
+			{
+				std::cout << "My n is " << n << " My priv key is " << privKey << " message is " << s << '\n';
+			}
+			s = decrypt(stoi(privKey), stoi(n), s);//decrypted message
+			//get first word
+			std::string first_word = s.substr(0, s.find(delimiter));
+
 			if (iResult != SOCKET_ERROR)
 			{
-				//std::cout
 				msg = "";
 				//if //online typed in chat can see who is online
-				if (std::string(tempmsg) == "//online")
+				if (s == "//online")
 				{
 					for (int i = 0; i < MAX_CLIENTS; i++)
 					{
@@ -65,15 +82,22 @@ int process_client(client_type& new_client, std::vector<client_type>& client_arr
 							if (new_client.id != i)
 								msg += client_array[i].login + " is online\n";
 					}
+					//if no one else online
 					if (msg == "")
 					{
 						msg += "no one else is online\n";
 					}
+					std::string	s = new_client.publicKey;
+					std::string delimiter = " ";
+					std::string pubKey = s.substr(0, s.find(delimiter));
+					s.erase(0, s.find(delimiter) + delimiter.length());
+					std::string n = s;
+					msg = encrypt(stoi(pubKey), stoi(n), msg);
 					iResult = send(new_client.socket, msg.c_str(), strlen(msg.c_str()), 0);
 				}
 				
 				// quit
-				else if (std::string(tempmsg) == "//quit")
+				else if (s == "//quit")
 				{
 					msg = "Client " + new_client.login + " Disconnected";
 
@@ -87,31 +111,91 @@ int process_client(client_type& new_client, std::vector<client_type>& client_arr
 					for (int i = 0; i < MAX_CLIENTS; i++)
 					{
 						if (client_array[i].socket != INVALID_SOCKET)
-							iResult = send(client_array[i].socket, msg.c_str(), strlen(msg.c_str()), 0);
-					}
+						{
+							std::string	s =client_array[i].publicKey;
+							std::string delimiter = " ";
+							std::string pubKey = s.substr(0, s.find(delimiter));
+							s.erase(0, s.find(delimiter) + delimiter.length());
+							std::string n = s;
+							s = msg;
+							s = encrypt(stoi(pubKey), stoi(n),s);
 
+							iResult = send(client_array[i].socket, s.c_str(), strlen(s.c_str()), 0);
+						}
+					}
 					break;
 				}
-
+				//private message
+				// format = //dm user_name message
+				else if (first_word == "//dm")
+				{
+					std::string user_name;
+					std::string PMessage;
+					s.erase(0, s.find(delimiter) + delimiter.length());
+					user_name = s.substr(0, s.find(delimiter));
+					s.erase(0, s.find(delimiter) + delimiter.length());
+					PMessage = s;
+					std::cout << PMessage << std::endl;
+					bool found = true;
+					for (int i = 0; i < MAX_CLIENTS; i++)
+					{
+						if (client_array[i].socket != INVALID_SOCKET)
+						{
+							if (client_array[i].login == user_name)
+							{
+								s = client_array[i].publicKey;
+								std::string pubKey = s.substr(0, s.find(delimiter));
+								s.erase(0, s.find(delimiter) + delimiter.length());
+								n = s;
+								PMessage = "Private " + new_client.login + ": " + PMessage;
+								PMessage = encrypt(stoi(pubKey), stoi(n), PMessage);
+								iResult = send(client_array[i].socket, PMessage.c_str(), strlen(PMessage.c_str()), 0);
+								found = false;
+								continue;
+							}
+						}
+					}
+					if (found)
+					{
+						s = new_client.publicKey;
+						std::string pubKey = s.substr(0, s.find(delimiter));
+						s.erase(0, s.find(delimiter) + delimiter.length());
+						n = s;
+						PMessage = "Not a valid user";
+						PMessage = encrypt(stoi(pubKey), stoi(n), PMessage);
+						iResult = send(new_client.socket, PMessage.c_str(), strlen(PMessage.c_str()), 0);
+					}
+					continue;
+				}
 				// general chat
 				else if (iResult != SOCKET_ERROR)
 				{
 					if (strcmp("", tempmsg))
 						msg = "Client " + new_client.login + ": " + tempmsg;
-
-					std::cout << msg.c_str() << std::endl;
-					std::string s = new_client.serverPrivKey;
-					std::string delimiter = " ";
-					std::string privKey = s.substr(0, s.find(delimiter));
-					s.erase(0, s.find(delimiter) + delimiter.length());
-					std::string n = s;
-					msg = decrypt(stoi(n), stoi(privKey), (std::string)tempmsg);
+			
 					//Broadcast that message to the other clients
 					for (int i = 0; i < MAX_CLIENTS; i++)
 					{
+						if (display)
+						{
+							std::cout << i << " and " << client_array[i].socket << '\n';
+						}
 						if (client_array[i].socket != INVALID_SOCKET)
 							if (new_client.id != i)
+							{
+								std::string r = "";
+								r = client_array[i].publicKey;
+								std::string pubKey = r.substr(0, r.find(delimiter));
+								r.erase(0, r.find(delimiter) + delimiter.length());
+								n = r;
+								if (display)
+								{
+									std::cout << "Client n is " << n << " Client pub key is " << pubKey << " message is " << s << '\n';
+								}
+								msg = "Client " + new_client.login + ": " + s;
+								msg = encrypt(stoi(pubKey), stoi(n), msg);
 								iResult = send(client_array[i].socket, msg.c_str(), strlen(msg.c_str()), 0);
+							}
 					}
 				}
 				//	default quit if fails	
@@ -156,7 +240,6 @@ int process_client(client_type& new_client, std::vector<client_type>& client_arr
 			}
 		}
 	} //end while
-
 	thread.detach();
 
 	return 0;
@@ -207,7 +290,7 @@ int main()
 	
 	// create keys
 	std::string n = getKeys();
-	std::cout << n << '\n';
+	//std::cout << n << '\n';
 	std::string delimiter = " ";
 	std::string publicKey = n.substr(0, n.find(delimiter));
 	n.erase(0, n.find(delimiter) + delimiter.length());
@@ -215,8 +298,10 @@ int main()
 	n.erase(0, n.find(delimiter) + delimiter.length());
 	publicKey += " " + n;
 	privKey += " " + n;
-	std::cout << publicKey << " " << privKey << '\n';
-	
+	if (display)
+	{
+		std::cout << "my Public key is " << publicKey << " my private is " << privKey << '\n';
+	}
 	//Initialize the client list
 	for (int i = 0; i < MAX_CLIENTS; i++)
 	{
@@ -250,9 +335,18 @@ int main()
 
 			//std::cout << client[i].socket << std::endl;
 		}
-
-		//check login and password===================================
 		char temp[DEFAULT_BUFLEN] = "";
+
+		//receive publickey
+		memset(temp, 0, DEFAULT_BUFLEN);
+		recv(client[temp_id].socket, temp, DEFAULT_BUFLEN, 0);
+		std::string clientKey = std::string(temp);
+		client[temp_id].publicKey = clientKey;
+		if (display)
+		{
+			std::cout << "The client key is " << std::string(clientKey) << '\n';
+		}
+		//check login and password===================================
 		std::string login;
 		std::string pw;
 		bool valid = false;// check if valid user
@@ -300,16 +394,10 @@ int main()
 			std::cout << "Client " << client[temp_id].login << " Accepted" << std::endl;
 			msg = std::to_string(client[temp_id].id);
 			send(client[temp_id].socket, msg.c_str(), strlen(msg.c_str()), 0);
-
-			//receive publickey
-			//=== send and receive keys
-			memset(temp, 0, DEFAULT_BUFLEN);
-			recv(client[temp_id].socket, temp, DEFAULT_BUFLEN, 0);
-			std::string clientKey = std::string(temp);
+						
 			send(client[temp_id].socket, publicKey.c_str(), strlen(publicKey.c_str()), 0);
-			client[temp_id].publicKey = clientKey;
 			client[temp_id].serverPrivKey = privKey;
-			std::cout << std::string(clientKey) <<'\n';
+
 			//Create a thread process for that client
 			my_thread[temp_id] = std::thread(process_client, std::ref(client[temp_id]), std::ref(client), std::ref(my_thread[temp_id]));
 		}
@@ -420,9 +508,9 @@ std::string ce(long int t, long int* e, long int p, long int q, long int* d)
 				break;
 		}
 	}
-	std::string s = std::to_string(e[1]);
+	std::string s = std::to_string(e[0]);
 	s += " ";
-	s += std::to_string(d[1]);
+	s += std::to_string(d[0]);
 	return s;
 }
 
@@ -446,9 +534,9 @@ std::string encrypt(long int eKey, long int n, std::string message)
 	const char* mess = message.c_str();
 	long int encrypted[100];
 	len = message.length();
-	while (i != len)
+	while (i < len)
 	{
-		pt = mess[i];
+		pt = int(mess[i]);
 		pt = pt - 96;
 		k = 1;
 		for (j = 0; j < eKey; j++)
@@ -456,20 +544,32 @@ std::string encrypt(long int eKey, long int n, std::string message)
 			k = k * pt;
 			k = k % n;
 		}
-		tt[i] = k;
+		//tt[i] = k;
 		ct = k + 96;
 		encrypted[i] = ct;
 		i++;
 	}
 	encrypted[i] = -1;
+	encrypted[i + 1] = NULL;
 	char arr[100] = "";
-	std::cout << "\nTHE ENCRYPTED MESSAGE IS\n";
+	if (display)
+	{
+		std::cout << "\nTHE ENCRYPTED MESSAGE IS\n";
+		for (i = 0; encrypted[i] != -1; i++)
+			printf("%c", encrypted[i]);
+		std::cout << '\n';
+	}
+	std::string s;
 	for (i = 0; encrypted[i] != -1; i++)
-		printf("%c", encrypted[i]);
-	for (i = 0; encrypted[i] != -1; i++)
-		arr[i] = encrypted[i] + '0';
-	std::string s = std::string(arr);
-	arr[i] = NULL;
+	{
+		s += std::to_string(encrypted[i]);
+		s += " ";
+	}
+	s += std::to_string(-1);
+	if (display)
+	{
+		std::cout << s << '\n';
+	}
 	return s;
 }
 
@@ -480,16 +580,20 @@ std::string decrypt(long int dKey, long int n, std::string encrypted)
 	long int i = 0;
 	long int decrypted[100];
 	long int mess[100];
-	for (i = 0; i < encrypted.length(); ++i)
+	while (encrypted != "-1")
 	{
-		mess[i] = encrypted[i];
+		std::string theLI;
+		std::string delimiter = " ";
+		theLI = encrypted.substr(0, encrypted.find(delimiter));
+		encrypted.erase(0, encrypted.find(delimiter) + delimiter.length());
+		mess[i] = stol(theLI);
+		++i;
 	}
 	mess[i] = -1;
-	//long int tt[100];
 	i = 0;
 	while (mess[i] != -1)
-	{
-		ct = tt[i];
+	{		
+		ct = mess[i] - 96;
 		k = 1;
 		for (j = 0; j < dKey; j++)
 		{
@@ -502,11 +606,16 @@ std::string decrypt(long int dKey, long int n, std::string encrypted)
 	}
 	decrypted[i] = -1;
 	char arr[100];
-	std::cout << "\nTHE DECRYPTED MESSAGE IS\n";
+	if (display)
+	{
+		std::cout << "\nTHE DECRYPTED MESSAGE IS\n";
+		for (i = 0; decrypted[i] != -1; i++)
+			printf("%c", decrypted[i]);
+		std::cout << '\n';
+
+	}
 	for (i = 0; decrypted[i] != -1; i++)
-		printf("%c", decrypted[i]);
-	for (i = 0; decrypted[i] != -1; i++)
-		arr[i] = decrypted[i] + '0';
+		arr[i] = decrypted[i];
 	arr[i] = NULL;
 	std::string s = std::string(arr);
 	return s;
