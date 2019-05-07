@@ -5,7 +5,6 @@
 #include <thread>
 #include <math.h>
 #include <string.h>
-//#include <stdlib.h>
 #include <time.h>
 using namespace std;
 
@@ -15,12 +14,13 @@ long int cd(long int, long int);
 string encrypt(long int, long int, string);
 string decrypt(long int, long int, string);
 string getKeys();
-long int tt[100];
 //===========================================================================
+
+bool display = true;
 
 #pragma comment (lib, "Ws2_32.lib")
 
-#define DEFAULT_BUFLEN 512            
+#define DEFAULT_BUFLEN 1024            
 #define IP_ADDRESS "192.168.1.68"
 #define DEFAULT_PORT "8000"
 
@@ -47,15 +47,23 @@ int process_client(client_type& new_client)
 
 		if (new_client.socket != 0)
 		{
-			string s = new_client.myPrivKey;
-			string delimiter = " ";
-			string privKey = s.substr(0, s.find(delimiter));
-			s.erase(0, s.find(delimiter) + delimiter.length());
-			string n = s;
 			int iResult = recv(new_client.socket, new_client.received_message, DEFAULT_BUFLEN, 0);
-			(string)new_client.received_message = decrypt(stoi(n), stoi(privKey), string(new_client.received_message));
+						
 			if (iResult != SOCKET_ERROR)
-				cout << new_client.received_message << endl;
+			{
+				string s = new_client.myPrivKey;
+				string delimiter = " ";
+				string privKey = s.substr(0, s.find(delimiter));
+				s.erase(0, s.find(delimiter) + delimiter.length());
+				string n = s;
+				if (display)
+				{
+					cout << "My n is " << n << " my pri Key is " << privKey << " and the message is " << new_client.received_message << '\n';
+				}
+				s = new_client.received_message;
+				s = decrypt(stoi(privKey), stoi(n), s);
+				cout << s << endl;
+			}
 			else
 			{
 				cout << "recv() failed: " << WSAGetLastError() << endl;
@@ -136,7 +144,23 @@ int main()
 		return 1;
 	}
 	cout << "Successfully Connected" << endl;
-	
+	// create keys
+
+	string n = getKeys();
+	//cout << n << '\n';
+	string delimiter = " ";
+	string publicKey = n.substr(0, n.find(delimiter));
+	n.erase(0, n.find(delimiter) + delimiter.length());
+	client.myPrivKey = n.substr(0, n.find(delimiter));
+	n.erase(0, n.find(delimiter) + delimiter.length());
+	publicKey += " " + n;
+	client.myPrivKey += " " + n;
+	if (display)
+	{
+		cout << "My Public is " << publicKey << " My private is " << client.myPrivKey << '\n';
+	}
+	// send key and receive key
+	send(client.socket, publicKey.c_str(), strlen(publicKey.c_str()), 0);
 	//=send login and password==========================================
 	string login;
 	string pw;
@@ -151,31 +175,20 @@ int main()
 	message = "";
 	//Obtain id from server for this client;
 	recv(client.socket, client.received_message, DEFAULT_BUFLEN, 0);
-	message = string(client.received_message);
+	n = "";
+	n = string(client.received_message);
 	
-	// create keys
+	bool clear = ((n != "Server is full") && (n != "Invalid Login or Password"));
 	
-	string n = getKeys();
-	cout << n << '\n';
-	string delimiter = " ";
-	string publicKey = n.substr(0,n.find(delimiter));
-	n.erase(0, n.find(delimiter) + delimiter.length());
-	client.myPrivKey = n.substr(0, n.find(delimiter));
-	n.erase(0, n.find(delimiter) + delimiter.length());
-	publicKey += " " + n;
-	client.myPrivKey += " " + n;
-	cout << publicKey << " " <<client.myPrivKey << '\n';
-
-	// send key and receive key
-	send(client.socket, publicKey.c_str(), strlen(publicKey.c_str()), 0);
+	//receive server key
 	recv(client.socket, client.received_message, DEFAULT_BUFLEN, 0);
 	message = string(client.received_message);
 	client.serverPubKey = message;
-	cout << message << '\n';
+	//cout << "server public is " << message << '\n';
 	// allow entry if server not full and login was valid
-	if ((message != "Server is full") && (message != "Invalid Login or Password"))
+	if (clear)
 	{
-		client.id = atoi(client.received_message);
+		client.id = atoi(n.c_str());
 		
 		//create thread to receive message realtime
 		thread my_thread(process_client, ref(client));
@@ -185,27 +198,59 @@ int main()
 			//prevents crashing when user inputs blank message
 			sent_message = "";
 			getline(cin, sent_message);
-			
+			string first_word = sent_message.substr(0, sent_message.find(delimiter));
 			if (sent_message == "")
+			{
 				continue;
-			
+			}
 			//when wanting to quit
-			if (sent_message == "//quit")
+			else if (sent_message == "//quit")
 			{
 				cout << "Goodbye\n";
+				string s = client.serverPubKey;
+				string delimiter = " ";
+				string serverKey = s.substr(0, s.find(delimiter));
+				s.erase(0, s.find(delimiter) + delimiter.length());
+				string n = s;
+				sent_message = encrypt(stoi(serverKey), stoi(n), sent_message);
 				send(client.socket, sent_message.c_str(), strlen(sent_message.c_str()), 0);
 				break;
 			}
-			
+			//if private messaging
+			//format = //dm user_name message
+			else if (first_word == "//dm")
+			{
+				string s = client.serverPubKey;
+				string serverKey = s.substr(0, s.find(delimiter));
+				s.erase(0, s.find(delimiter) + delimiter.length());
+				string n = s;
+				sent_message = encrypt(stoi(serverKey), stoi(n), sent_message);
+				iResult = send(client.socket, sent_message.c_str(), strlen(sent_message.c_str()), 0);
+				if (iResult <= 0)
+				{
+					cout << "send() failed: " << WSAGetLastError() << endl;
+					break;
+				}
+			}
 			//continue chat
-			string s = client.serverPubKey;
-			cout << client.serverPubKey;
-			string delimiter = " ";
-			string serverKey = s.substr(0, s.find(delimiter));
-			s.erase(0, s.find(delimiter) + delimiter.length());
-			string n = s;
-			sent_message = encrypt(stoi(n), stoi(serverKey), sent_message);
-			iResult = send(client.socket, sent_message.c_str(), strlen(sent_message.c_str()), 0);
+			else
+			{
+				string s = client.serverPubKey;
+				if (display)
+				{
+					cout << "Server public key:" << client.serverPubKey << '\n';
+				}
+				string delimiter = " ";
+				string serverKey = s.substr(0, s.find(delimiter));
+				s.erase(0, s.find(delimiter) + delimiter.length());
+				string n = s;
+				if (display)
+				{
+					cout << "server n is " << n << " server key is " << serverKey << " message is " << sent_message << '\n';
+				}
+				sent_message = encrypt(stoi(serverKey), stoi(n), sent_message);
+				iResult = send(client.socket, sent_message.c_str(), strlen(sent_message.c_str()), 0);
+			}
 			if (iResult <= 0)
 			{
 				cout << "send() failed: " << WSAGetLastError() << endl;
@@ -217,8 +262,8 @@ int main()
 		my_thread.detach();
 	}
 	//failed message
-	else
-		cout << client.received_message << endl;
+	//else
+	//	cout << n << endl;
 
 	//close socket
 	cout << "Shutting down socket..." << endl;
@@ -314,9 +359,9 @@ string ce(long int t, long int* e, long int p, long int q, long int* d)
 				break;
 		}
 	}
-	string s = to_string(e[1]);
+	string s = to_string(e[0]);
 	s += " ";
-	s += to_string(d[1]);
+	s += to_string(d[0]);
 	return s;
 }
 
@@ -331,7 +376,7 @@ long int cd(long int x, long int t)
 	}
 }
 // encrypt message need private key, the n , and the encrypted message
-string encrypt(long int eKey, long int n, string message)
+std::string encrypt(long int eKey, long int n, std::string message)
 {
 	long int pt, ct, j, k, len;
 	long int i = 0;
@@ -339,9 +384,9 @@ string encrypt(long int eKey, long int n, string message)
 	const char* mess = message.c_str();
 	long int encrypted[100];
 	len = message.length();
-	while (i != len)
+	while (i < len)
 	{
-		pt = mess[i];
+		pt = int(mess[i]);
 		pt = pt - 96;
 		k = 1;
 		for (j = 0; j < eKey; j++)
@@ -349,20 +394,32 @@ string encrypt(long int eKey, long int n, string message)
 			k = k * pt;
 			k = k % n;
 		}
-		tt[i] = k;
+		//tt[i] = k;
 		ct = k + 96;
 		encrypted[i] = ct;
 		i++;
 	}
 	encrypted[i] = -1;
+	encrypted[i + 1] = NULL;
 	char arr[100] = "";
-	cout << "\nTHE ENCRYPTED MESSAGE IS\n";
+	if (display)
+	{
+		std::cout << "\nTHE ENCRYPTED MESSAGE IS\n";
+		for (i = 0; encrypted[i] != -1; i++)
+			printf("%c", encrypted[i]);
+		cout << '\n';
+	}
+	std::string s;
 	for (i = 0; encrypted[i] != -1; i++)
-		printf("%c", encrypted[i]);
-	for (i = 0; encrypted[i] != -1; i++)
-		arr[i] = encrypted[i] + '0';
-	string s = string(arr);
-	arr[i] = NULL;
+	{
+		s += std::to_string(encrypted[i]);
+		s += " ";
+	}
+	s += std::to_string(-1);
+	if (display)
+	{
+		cout << s << '\n';
+	}
 	return s;
 }
 
@@ -373,16 +430,20 @@ std::string decrypt(long int dKey, long int n, std::string encrypted)
 	long int i = 0;
 	long int decrypted[100];
 	long int mess[100];
-	for (i = 0; i < encrypted.length(); ++i)
+	while (encrypted != "-1")
 	{
-		mess[i] = encrypted[i];
+		std::string theLI;
+		std::string delimiter = " ";
+		theLI = encrypted.substr(0, encrypted.find(delimiter));
+		encrypted.erase(0, encrypted.find(delimiter) + delimiter.length());
+		mess[i] = stol(theLI);
+		++i;
 	}
 	mess[i] = -1;
-	//long int tt[100];
 	i = 0;
 	while (mess[i] != -1)
 	{
-		ct = tt[i];
+		ct = mess[i] - 96;
 		k = 1;
 		for (j = 0; j < dKey; j++)
 		{
@@ -395,11 +456,15 @@ std::string decrypt(long int dKey, long int n, std::string encrypted)
 	}
 	decrypted[i] = -1;
 	char arr[100];
-	std::cout << "\nTHE DECRYPTED MESSAGE IS\n";
+	if (display)
+	{
+		std::cout << "\nTHE DECRYPTED MESSAGE IS\n";
+		for (i = 0; decrypted[i] != -1; i++)
+			printf("%c", decrypted[i]);
+		std::cout << '\n';
+	}
 	for (i = 0; decrypted[i] != -1; i++)
-		printf("%c", decrypted[i]);
-	for (i = 0; decrypted[i] != -1; i++)
-		arr[i] = decrypted[i] + '0';
+		arr[i] = decrypted[i];
 	arr[i] = NULL;
 	std::string s = std::string(arr);
 	return s;
